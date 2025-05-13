@@ -1,129 +1,227 @@
-import speech_recognition as sr
-import webbrowser
-import pyttsx3
-import musiclibrary
-import requests
-from gtts import gTTS
-import pygame
+import tkinter as tk
+from tkinter import ttk, scrolledtext
+import threading
+import queue
 import os
+import json
+import webbrowser
+import requests
+import pygame
+import speech\_recognition as sr
+import sounddevice as sd
+import vosk
+import google.generativeai as genai
+from gtts import gTTS
+from PIL import Image, ImageTk
 
+# Configuration Constants
 
+CONFIG = {
+"GEMINI\_API\_KEY": "",  # Add your API key here
+"NEWS\_API\_KEY": "",
+"VOSK\_MODEL\_PATH": r"C:\Users\bhish\PycharmProjects\PythonProject\model\vosk-model-small-en-us-0.15",
+"BG\_IMAGE\_PATH": r"D:\abstract-ai-circuit-board-background-600nw-2471339475.jpg",
+"SAMPLE\_RATE": 16000,
+"MODEL\_NAME": "gemini-1.5-flash",
+"TEMPERATURE": 0.7,  # Lower for more precise answers
+"MAX\_TOKENS": 1024   # Reduced for faster responses
+}
+
+# Initialize components
+
+pygame.mixer.init()
+vosk\_model = vosk.Model(CONFIG\["VOSK\_MODEL\_PATH"])
+audio\_queue = queue.Queue()
+gui\_update\_queue = queue.Queue()
 recognizer = sr.Recognizer()
-engine = pyttsx3.init()
-newsapi = "bca0114adef442d08090dbd36d379e17"
 
-def old_speak(text):
+class VoiceAssistant:
+def **init**(self):
+self.setup\_gui()
+self.setup\_ai\_model()
+self.start\_voice\_thread()
+self.gui\_loop()
 
-    engine.say(text)
-    engine.runAndWait()
+```
+def setup_ai_model(self):
+    """Initialize the Gemini AI model with optimized configuration"""
+    if not CONFIG["GEMINI_API_KEY"]:
+        raise ValueError("Gemini API key not configured")
 
-def speak(text):
-    tts = gTTS(text)
-    tts.save('temp.mp3')
-
-  # Initialize pygame mixer
-    pygame.mixer.init()
-
-    # Load your MP3 file
-    pygame.mixer.music.load("temp.mp3")
-
-    # Play the MP3 file
-    pygame.mixer.music.play()
-
-    # Keep the program running while the music plays
-    while pygame.mixer.music.get_busy():
-        continue  # This keeps checking if the music is still playing
-
-    pygame.mixer.music.unload()
-
-    os.remove("temp.mp3")
-
-
-def aiProcess(command):
-
-    API_KEY = "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"
-    URL = "https://api.groq.com/openai/v1/chat/completions"
-
-    headers = {
-        "Authorization": f"Bearer {API_KEY}",
-        "Content-Type": "application/json"
+    genai.configure(api_key=CONFIG["GEMINI_API_KEY"])
+    self.generation_config = {
+        "temperature": CONFIG["TEMPERATURE"],
+        "max_output_tokens": CONFIG["MAX_TOKENS"],
     }
+    self.model = genai.GenerativeModel(CONFIG["MODEL_NAME"])
 
-    data = {
-        "model": "mixtral-8x7b-32768",
-        "messages": [{"role": "user", "content": command}]
-    }
+def setup_gui(self):
+    """Set up the graphical user interface"""
+    self.root = tk.Tk()
+    self.root.title("leo - Optimized Voice Assistant")
+    self.root.geometry("700x500")
 
-    response = requests.post(URL, headers=headers, json=data)
+    # Load and set background image
+    try:
+        bg_image = Image.open(CONFIG["BG_IMAGE_PATH"])
+        bg_image = bg_image.resize((700, 500), Image.Resampling.LANCZOS)
+        self.bg_image = ImageTk.PhotoImage(bg_image)
+        tk.Label(self.root, image=self.bg_image).place(relwidth=1, relheight=1)
+    except Exception as e:
+        print(f"Background image error: {e}")
+        self.root.configure(bg="#2e3b4e")
 
-    if response.status_code == 200:
-        result = response.json()
-        assistant_response = result["choices"][0]["message"]["content"]  # Extract only the text response
-        return (assistant_response)
-    else:
-        print(f"Error {response.status_code}: {response.json()}")
+    # Widgets
+    self.status_label = ttk.Label(self.root, text="Status: Initializing...")
+    self.status_label.grid(row=0, column=0, padx=10, pady=10, sticky="w")
 
-def processCommand(c):
-    if "open google" in c.lower():
-        webbrowser.open("google.com")
+    self.heard_text = ttk.Label(self.root, text="Heard: ")
+    self.heard_text.grid(row=1, column=0, padx=10, pady=5, sticky="w")
 
-    elif "open youtube" in c.lower():
-        webbrowser.open("youtube.com")
+    self.response_log = scrolledtext.ScrolledText(
+        self.root, height=12, width=60, wrap=tk.WORD,
+        font=("Helvetica", 10), bg="#2e3b4e", fg="white"
+    )
+    self.response_log.grid(row=2, column=0, padx=10, pady=10)
 
-    elif "open facebook" in c.lower():
-        webbrowser.open("facebook.com")
+def update_gui(self, update_type, message):
+    """Thread-safe GUI updates"""
+    if update_type == "status":
+        self.status_label.config(text=f"Status: {message}")
+    elif update_type == "heard":
+        self.heard_text.config(text=f"Heard: {message}")
+    elif update_type == "log":
+        self.response_log.insert(tk.END, message + "\n")
+        self.response_log.see(tk.END)
+        self.response_log.update()
 
-    elif c.lower().startswith("play"):
-        song = c.lower().split(" ")[1]
-        link = musiclibrary.music[song]
-        webbrowser.open(link)
+def speak(self, text):
+    """Optimized text-to-speech with caching"""
+    try:
+        # Create a hash of the text for caching
+        cache_file = f"cache_{hash(text)}.mp3"
 
-    elif "news" in c.lower():
-        r = requests.get(f" https://newsapi.org/v2/top-headlines?country=us&apiKey={newsapi}")
-        if r.status_code == 200:
-            data = r.json()
-            articles = data.get('articles', [])
-            for article in articles:
-                speak(article['title'])
+        if not os.path.exists(cache_file):
+            tts = gTTS(text)
+            tts.save(cache_file)
 
-    else:
-        output = aiProcess(c)
-        speak(output)
+        pygame.mixer.music.load(cache_file)
+        pygame.mixer.music.play()
+        while pygame.mixer.music.get_busy():
+            continue
+    except Exception as e:
+        print(f"Speech error: {e}")
 
+def process_command(self, command):
+    """Optimized command processing with direct execution for common commands"""
+    cmd = command.lower()
 
+    # Predefined commands (faster than AI processing)
+    if "open google" in cmd:
+        webbrowser.open("https://google.com")
+        return "Opening Google"
+    elif "open youtube" in cmd:
+        webbrowser.open("https://youtube.com")
+        return "Opening YouTube"
+    elif "news" in cmd:
+        return self.get_news()
+    elif cmd.startswith("play "):
+        return self.play_music(cmd[5:])
 
-if __name__ == "__main__":
-    speak("Initialize Lexo.....")
+    # AI processing for complex queries
+    return self.ai_process(command)
 
-    while True:
+def ai_process(self, query):
+    """Optimized AI processing with error handling"""
+    try:
+        response = self.model.generate_content(
+            query,
+            generation_config=self.generation_config
+        )
+        return response.text or "I didn't get a response."
+    except Exception as e:
+        return f"Error processing request: {str(e)}"
 
-        r = sr.Recognizer()
+def get_news(self):
+    """Optimized news fetching"""
+    try:
+        response = requests.get(
+            f"https://newsapi.org/v2/top-headlines?country=us&apiKey={CONFIG['NEWS_API_KEY']}",
+            timeout=3  # Faster timeout
+        )
+        articles = response.json().get("articles", [])[:3]  # Fewer articles
+        return "\n".join(article['title'] for article in articles)
+    except Exception as e:
+        return f"Couldn't fetch news: {str(e)}"
 
+def play_music(self, song):
+    """Music playback placeholder"""
+    # Implement your music library logic here
+    return f"Attempting to play {song}"
 
-        # recognize speech using Goolge
-        try:
-            with sr.Microphone() as source:
-                print("Listening...")
-                audio = r.listen(source, timeout=10, phrase_time_limit=5)
-                print("Recognizing...")
+def voice_loop(self):
+    """Optimized voice recognition loop"""
+    with sd.RawInputStream(
+            samplerate=CONFIG["SAMPLE_RATE"],
+            blocksize=8000,
+            dtype='int16',
+            channels=1,
+            callback=lambda indata, *_: audio_queue.put(bytes(indata))
+    ):
+        rec = vosk.KaldiRecognizer(vosk_model, CONFIG["SAMPLE_RATE"])
 
-            word = r.recognize_google(audio)
-            if (word.lower() == "lexo"):
-                speak("Yes Boss")
+        while True:
+            data = audio_queue.get()
+            if rec.AcceptWaveform(data):
+                result = json.loads(rec.Result())
+                text = result.get("text", "")
 
-                with sr.Microphone() as source:
-                    print("Lexo Activated")
-                    audio = r.listen(source)
-                    command = r.recognize_google(audio)
+                gui_update_queue.put(("heard", text))
 
-                    processCommand(command)
+                if "leo" in text.lower():
+                    gui_update_queue.put(("status", "Wake word detected!"))
+                    self.speak("Yes Boss")
 
+                    try:
+                        with sr.Microphone() as source:
+                            gui_update_queue.put(("status", "Listening..."))
+                            recognizer.adjust_for_ambient_noise(source, duration=0.5)
+                            audio = recognizer.listen(source, timeout=3, phrase_time_limit=5)
+                            command = recognizer.recognize_google(audio)
 
-        except Exception as e:
-            print("Error; {0}".format(e))
+                            gui_update_queue.put(("heard", f"Command: {command}"))
+                            gui_update_queue.put(("log", f"You: {command}"))
 
+                            response = self.process_command(command)
+                            gui_update_queue.put(("log", f"leo: {response}"))
+                            self.speak(response)
 
+                    except Exception as e:
+                        self.speak("Sorry, I didn't catch that.")
+                        gui_update_queue.put(("log", f"Error: {str(e)}"))
 
-# Initialize recognizer and text-to-speech engine
+                    finally:
+                        gui_update_queue.put(("status", "Waiting for wake word..."))
 
+def start_voice_thread(self):
+    """Start the voice processing thread"""
+    threading.Thread(target=self.voice_loop, daemon=True).start()
+    self.speak("leo is online. Say 'leo' to activate.")
 
+def gui_loop(self):
+    """Process GUI updates"""
+    while not gui_update_queue.empty():
+        update_type, message = gui_update_queue.get_nowait()
+        self.update_gui(update_type, message)
+    self.root.after(50, self.gui_loop)  # Faster update interval
+
+def run(self):
+    """Run the application"""
+    self.root.mainloop()
+```
+
+# Start the application
+
+if **name** == "**main**":
+assistant = VoiceAssistant()
+assistant.run()
